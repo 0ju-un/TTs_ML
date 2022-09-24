@@ -1,21 +1,21 @@
 import os
+import shutil
 import json
 from PIL import Image
+from sklearn.model_selection import train_test_split
 
 ## directory path
 root_dir = './교통안전(Bbox)'
 src_dir = os.path.join(root_dir,'이미지')
 label_dir = os.path.join(root_dir, '라벨')
 dest_dir = './dataset'
-dest_img_dir = os.path.join(dest_dir, 'images')
-dest_label_dir = os.path.join(dest_dir, 'labels')
 
 if not os.path.exists(dest_dir):
     os.mkdir(dest_dir)
-if not os.path.exists(dest_img_dir):
-    os.mkdir(dest_img_dir)
-if not os.path.exists(dest_label_dir):
-    os.mkdir(dest_label_dir)
+if not os.path.exists(os.path.join(dest_dir, 'images')):
+    os.mkdir(os.path.join(dest_dir, 'images'))
+if not os.path.exists(os.path.join(dest_dir, 'labels')):
+    os.mkdir(os.path.join(dest_dir, 'labels'))
 
 def get_img_and_ann(path, src_dir):
     with open(path, 'r') as f:
@@ -37,7 +37,8 @@ def get_ann(annotations, id):
             category_list = [x//7 for x in ann['category_id']]
             return category_list, ann['bbox']
 
-def get_label_txt(file, category_list, bbox_list, img_w, img_h):
+def convert_label(category_list, bbox_list, img_w, img_h):
+    labels = []
     for i, bbox in enumerate(bbox_list):
         category = category_list[i]
         x1,y1,x2, y2 = bbox
@@ -59,13 +60,34 @@ def get_label_txt(file, category_list, bbox_list, img_w, img_h):
         w = format(w, '.6f')
         h = format(h, '.6f')
 
-        # Writing current object
-        file.write(f"{category} {x_centre} {y_centre} {w} {h}\n")
+        label = [str(category), x_centre, y_centre, w, h]
+        labels.append(label)
+    return labels
+
+def save_data(X, Y, dir, index):
+    img_dir = os.path.join(dir,'images/'+index)
+    label_dir = os.path.join(dir,'labels/'+index)
+    if not os.path.exists(img_dir):
+        os.mkdir(img_dir)
+    if not os.path.exists(label_dir):
+        os.mkdir(label_dir)
+
+    for idx, origin_img in enumerate(X):
+        # img.save(os.path.join(img_dir,f'{idx+1}.jpg'), 'JPEG')
+        copy_path = os.path.join(img_dir,f'{idx+1}.jpg')
+        if not os.path.exists(copy_path):
+            shutil.copy(origin_img, copy_path)
+        file_object = open(f"{label_dir}/{idx+1}.txt", "a")        # Opening file for current image
+        for bbox in Y[idx]:
+            file_object.write('\t'.join(bbox))
+        file_object.close()
 
 ##
 
 folder_list = [f for f in os.listdir(src_dir) if not f.startswith('.')] # ingore '.DS_Store'
-idx = 1
+img_list = []
+label_list = []
+
 for folder in folder_list:
     label_folder = os.path.join(label_dir,folder)
     dir_list = [f for f in os.listdir(label_folder) if not f.startswith('.')]
@@ -77,15 +99,22 @@ for folder in folder_list:
             json_path = os.path.join(json_dir, file) ## annotation path
             data_list = get_img_and_ann(json_path, os.path.join(src_dir, folder))
             for data in data_list:
-                # Get image size
+                # Get image
                 img_path = data['path']
                 image = Image.open(img_path)
+                img_list.append(img_path) # add image
                 img_w, img_h = image.size
-                # Opening file for current image
-                file_object = open(f"{dest_label_dir}/{idx}.txt", "a")
-                # Get text file for yolo format
-                get_label_txt(file_object, data['category_id'],data['bbox'], img_w, img_h)
-                file_object.close()
-                # Save image
-                image.save(os.path.join(dest_img_dir, str(idx)+'.jpg'),'JPEG')
-                idx+=1
+
+                # Get labels for yolo format
+                bbox = convert_label(data['category_id'],data['bbox'], img_w, img_h)
+                label_list.append(bbox)
+
+## split train, val, test
+x_train, x_test, y_train, y_test = train_test_split(img_list, label_list, test_size=0.1, shuffle=True, random_state=34)
+x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.11, shuffle=True, random_state=34)
+
+print(len(x_train), len(x_val), len(x_test))
+
+save_data(x_train, y_train, dest_dir, 'train')
+save_data(x_val, y_val, dest_dir, 'val')
+save_data(x_test, y_test, dest_dir, 'test')
